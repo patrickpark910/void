@@ -181,7 +181,7 @@ def calc_params_void(rho_csv_name, params_csv_name):
     rods = [c for c in rho_df.columns.values.tolist() if "unc" not in c]
     heights = rho_df.index.values.tolist()
 
-    parameters = ['density', 'D density', 'D rho', 'rho unc', 'D dollars', 'dollars unc',
+    parameters = ['density', 'D density %', 'D rho', 'rho unc', 'D dollars', 'dollars unc',
                   'void rho', 'void rho unc', 'void dollars', 'void dollars unc']
 
     # Setup a dataframe to collect rho values
@@ -189,7 +189,7 @@ def calc_params_void(rho_csv_name, params_csv_name):
     params_df = pd.DataFrame(columns=parameters)  # use lower cases to match 'rods' def above
     params_df['density'] = WATER_DENSITIES
     params_df.set_index('density', inplace=True)
-    params_df['D density'] = [round(1.0-x, 1) for x in WATER_DENSITIES]
+    params_df['D density %'] = [100*round(1.0-x, 1) for x in WATER_DENSITIES]
     params_df['D rho'] = rho_df['rho']
     params_df['rho unc'] = rho_df['rho unc']
     params_df['D dollars'] = rho_df['dollars']
@@ -200,10 +200,10 @@ def calc_params_void(rho_csv_name, params_csv_name):
             params_df.loc[water_density, 'void rho'], params_df.loc[water_density, 'void rho unc'], \
             params_df.loc[water_density, 'void dollars'], params_df.loc[water_density, 'void dollars unc'] = 0, 0, 0, 0
         else:
-            params_df.loc[water_density, 'void rho'] = params_df.loc[water_density, 'D rho'] / 10/params_df.loc[water_density, 'D density']
-            params_df.loc[water_density, 'void rho unc'] = params_df.loc[water_density, 'rho unc'] / 10/params_df.loc[water_density, 'D density']
-            params_df.loc[water_density, 'void dollars'] = params_df.loc[water_density, 'D dollars'] / 10/params_df.loc[water_density, 'D density']
-            params_df.loc[water_density, 'void dollars unc'] = params_df.loc[water_density, 'dollars unc'] / 10/params_df.loc[water_density, 'D density']
+            params_df.loc[water_density, 'void rho'] = params_df.loc[water_density, 'D rho'] / params_df.loc[water_density, 'D density %']
+            params_df.loc[water_density, 'void rho unc'] = params_df.loc[water_density, 'rho unc'] / params_df.loc[water_density, 'D density %']
+            params_df.loc[water_density, 'void dollars'] = params_df.loc[water_density, 'D dollars'] / params_df.loc[water_density, 'D density %']
+            params_df.loc[water_density, 'void dollars unc'] = params_df.loc[water_density, 'dollars unc'] / params_df.loc[water_density, 'D density %']
 
     print(f"\nVarious rod parameters:\n{params_df}")
     params_df.to_csv(params_csv_name)
@@ -256,7 +256,7 @@ def plot_data_void(keff_csv_name, rho_csv_name, params_csv_name, figure_name, rh
                                               r"Reactivity ($\%\Delta k/k$)", \
                                               r"Void coefficient ((%$\Delta k/k$)/%)"
     if rho_or_dollars == 'dollars':
-        y_label_rho, y_label_void= r"Reactivity ($)", r"Void coefficient (\$/%)"
+        y_label_rho, y_label_void= r"Reactivity ($\Delta$\$)", r"Void coefficient (\$/%)"
 
     plot_color = ["tab:red","tab:blue","tab:green"]
 
@@ -272,14 +272,14 @@ def plot_data_void(keff_csv_name, rho_csv_name, params_csv_name, figure_name, rh
     ax_rho_y_min, ax_rho_y_max = -16, 1
     ax_rho_y_major_ticks_interval, ax_rho_y_minor_ticks_interval = 2, 1
     if rho_or_dollars == 'dollars':
-        ax_rho_y_min, ax_rho_y_max = -22, 1.0
+        ax_rho_y_min, ax_rho_y_max = -21, 1.0
         ax_rho_y_major_ticks_interval, ax_rho_y_minor_ticks_interval = 2, 1
 
-    ax_void_y_min, ax_void_y_max = -40, 5
-    ax_void_y_major_ticks_interval, ax_void_y_minor_ticks_interval = 5, 2.5
+    ax_void_y_min, ax_void_y_max = -0.4, 0.1
+    ax_void_y_major_ticks_interval, ax_void_y_minor_ticks_interval = 0.1, 0.025
     if rho_or_dollars == 'dollars':
-        ax_void_y_min, ax_void_y_max = -50, 5
-        ax_void_y_major_ticks_interval, ax_void_y_minor_ticks_interval = 5, 2.5
+        ax_void_y_min, ax_void_y_max = -0.5, 0.1
+        ax_void_y_major_ticks_interval, ax_void_y_minor_ticks_interval = 0.1, 0.025
 
     fig, axs = plt.subplots(3, 1, figsize=(1636 / 96, 3 * 673 / 96), dpi=my_dpi, facecolor='w', edgecolor='k')
     ax_keff, ax_rho, ax_void = axs[0], axs[1], axs[2]  # integral, differential worth on top, bottom, resp.
@@ -302,7 +302,7 @@ def plot_data_void(keff_csv_name, rho_csv_name, params_csv_name, figure_name, rh
     y_fit_keff = np.polyval(eq_keff, x)
 
     ax_keff.plot(x, y_fit_keff, color=plot_color[0],
-                 label=r'y=-{:.3f}$x^2$+{:.2f}$x$+{:.2f}   $R^2$={:.2f}    $\sigma$={:.4f}'.format(
+                 label=r'y=-{:.3f}$x^2$+{:.2f}$x$+{:.2f},  $R^2$={:.2f},  $\sigma$={:.4f}'.format(
                      np.abs(eq_keff[0]),eq_keff[1], eq_keff[2], r2_keff, sd_keff))
 
     # Plot data for reactivity
@@ -321,7 +321,7 @@ def plot_data_void(keff_csv_name, rho_csv_name, params_csv_name, figure_name, rh
     y_fit_rho = np.polyval(eq_rho, x_fit)
 
     ax_rho.plot(x_fit, y_fit_rho, color=plot_color[1],
-                label=r'y=-{:.1f}$x^2$+{:.0f}$x${:.0f}   $R^2$={:.2f}    $\sigma$={:.2f}'.format(
+                label=r'y=-{:.1f}$x^2$+{:.0f}$x${:.0f},  $R^2$={:.2f},  $\sigma$={:.2f}'.format(
                     np.abs(eq_rho[0]), eq_rho[1], eq_rho[2], r2_rho, sd_rho))
 
     # Plot data for void
@@ -340,14 +340,15 @@ def plot_data_void(keff_csv_name, rho_csv_name, params_csv_name, figure_name, rh
     y_fit_void = np.polyval(eq_void, x_fit)
 
     ax_void.plot(x_fit, y_fit_void, color=plot_color[2],
-                label=r'y={:.1f}$x${:.0f}   $R^2$={:.2f}    $\sigma$={:.2f}'.format(
-                    np.abs(eq_void[0]), eq_void[1], r2_void, sd_void))
+                label=r'y={:.2f}$x${:.2f},  $R^2$={:.2f},  $\bar x$$\pm\sigma$={:.3f}$\pm${:.3f}'.format(
+                    np.abs(eq_void[0]), eq_void[1], r2_void, np.mean(y_fit_void), sd_void))
 
-    eq_void_der = -1*np.polyder(eq_rho)  # n=2 order fit
+    eq_void_der = -1*np.polyder(eq_rho)/100  # n=2 order fit
     y_fit_void_der = np.polyval(eq_void_der, x_fit)
 
     ax_void.plot(x_fit, y_fit_void_der, color=plot_color[2], linestyle='dashed',
-                label=r'y={:.1f}$x${:.0f}'.format(np.abs(eq_void_der[0]), eq_void_der[1]))
+                label=r'y={:.2f}$x${:.2f},  $\bar x$={:.3f}'.format(
+                    np.abs(eq_void_der[0]), eq_void_der[1], np.mean(y_fit_void_der)))
 
 
 
@@ -388,7 +389,7 @@ def plot_data_void(keff_csv_name, rho_csv_name, params_csv_name, figure_name, rh
 
     ax_rho.set_xlabel(x_label, fontsize=label_fontsize)
     ax_rho.set_ylabel(y_label_rho, fontsize=label_fontsize)
-    ax_rho.legend(title=f'Key', title_fontsize=legend_fontsize, ncol=4, fontsize=legend_fontsize, loc='lower right')
+    ax_rho.legend(title=f'Key', title_fontsize=legend_fontsize, ncol=1, fontsize=legend_fontsize, loc='lower right')
 
 
     # Void worth plot settings
@@ -409,7 +410,7 @@ def plot_data_void(keff_csv_name, rho_csv_name, params_csv_name, figure_name, rh
 
     ax_void.set_xlabel(x_label, fontsize=label_fontsize)
     ax_void.set_ylabel(y_label_void, fontsize=label_fontsize)
-    ax_void.legend(title=f'Key', title_fontsize=legend_fontsize, ncol=4, fontsize=legend_fontsize, loc='lower right')
+    ax_void.legend(title=f'Key', title_fontsize=legend_fontsize, ncol=1, fontsize=legend_fontsize, loc='lower right')
 
 
     plt.savefig(f"{figure_name.split('.')[0]}_{rho_or_dollars}.{figure_name.split('.')[-1]}", bbox_inches='tight',
