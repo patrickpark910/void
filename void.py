@@ -40,6 +40,7 @@ WATER_MAT_CARD = '102'
 WATER_DENSITIES = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0] # np.arange(start=0.1,stop=1.0,step=0.1)
 # Prefer hardcoded lists rather than np.arange, which produces imprecise floating points, e.g., 0.7000000...003
 INPUTS_FOLDER_NAME = 'inputs'
+OUTPUTS_FOLDER_NAME = 'outputs'
 
 def main():
     initialize_rane()
