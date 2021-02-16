@@ -4,7 +4,7 @@ VOID COEFFICIENT (MCNP)
 Written by Patrick Park (RO, Physics '22)
 ppark@reed.edu
 
-This proejct should be available at 
+This project should be available at
 https://github.com/patrickpark910/void/
 
 First written Feb. 15, 2021
@@ -32,6 +32,7 @@ import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 from scipy import stats
+from scipy.optimize import curve_fit
 from matplotlib.ticker import MultipleLocator, FormatStrFormatter
 
 from mcnp_funcs import *
@@ -78,10 +79,10 @@ def main():
     print(f"Created {num_inputs_created} new input decks.\n"
           f"--Skipped {num_inputs_skipped} input decks because they already exist.")
 
-    if not check_run_mcnp(): sys.exit()
+    # if not check_run_mcnp(): sys.exit()
 
     # Run MCNP for all .i files in f".\{inputs_folder_name}".
-    tasks = get_tasks()
+    tasks = 12 # get_tasks()
     for file in os.listdir(f"{FILEPATH}/{INPUTS_FOLDER_NAME}"):
         run_mcnp(FILEPATH,f"{FILEPATH}/{INPUTS_FOLDER_NAME}/{file}",OUTPUTS_FOLDER_NAME,tasks)
 
@@ -102,8 +103,9 @@ def main():
     keff_df.to_csv(KEFF_CSV_NAME)
 
     convert_keff_to_rho_void(KEFF_CSV_NAME, RHO_CSV_NAME)
-    # calc_params_void(RHO_CSV_NAME, PARAMS_CSV_NAME)
-    for rho_or_dollars in ['rho','dollars']: plot_data_void(KEFF_CSV_NAME, RHO_CSV_NAME, FIGURE_NAME, rho_or_dollars)
+    calc_params_void(RHO_CSV_NAME, PARAMS_CSV_NAME)
+    for rho_or_dollars in ['rho','dollars']: plot_data_void(KEFF_CSV_NAME, RHO_CSV_NAME, PARAMS_CSV_NAME,
+                                                            FIGURE_NAME, rho_or_dollars)
 
     print(f"\n************************ PROGRAM COMPLETE ************************\n")
 
@@ -124,9 +126,9 @@ def convert_keff_to_rho_void(keff_csv_name,rho_csv_name):
 
     # Setup a dataframe to collect rho values
     rho_df = pd.DataFrame(columns=keff_df.columns.values.tolist()) # use lower cases to match 'rods' def above
-    rho_df.columns = ['rho','rho unc']
+    rho_df.columns = ['rho', 'rho unc']
     rho_df["density"] = water_densities
-    rho_df.set_index("density",inplace=True)
+    rho_df.set_index("density", inplace=True)
 
     '''
     ERROR PROPAGATION FORMULAE
@@ -148,12 +150,17 @@ def convert_keff_to_rho_void(keff_csv_name,rho_csv_name):
         d_k2_minus_k1 = np.sqrt(dk2**2+dk1**2)
         d_k2_times_k1 = k2*k1*np.sqrt((dk2/k2)**2+(dk1/k1)**2)
         rho = -(k2-k1)/(k2*k1)*100
+        dollars = 0.01*rho/BETA_EFF
 
-        rho_df.loc[water_density,'rho'] = rho
+        rho_df.loc[water_density, 'rho'] = rho
+        rho_df.loc[water_density, 'dollars'] = dollars
+        # while the 'dollars' (and 'dollars unc') columns are not in the original rho_df definition,
+        # simply defining a value inside it automatically adds the column
         if k2_minus_k1 != 0:
-            d_rho = rho*np.sqrt((d_k2_minus_k1/k2_minus_k1)**2+(d_k2_times_k1/k2_times_k1)**2)
-            rho_df.loc[water_density,'rho unc'] = d_rho
-        else: rho_df.loc[water_density,'rho unc'] = 0
+            rho_unc = rho*np.sqrt((d_k2_minus_k1/k2_minus_k1)**2+(d_k2_times_k1/k2_times_k1)**2)
+            dollars_unc = rho_unc/100/BETA_EFF
+            rho_df.loc[water_density,'rho unc'], rho_df.loc[water_density,'dollars unc'] = rho_unc, dollars_unc
+        else: rho_df.loc[water_density, 'rho unc'], rho_df.loc[water_density, 'dollars unc'] = 0, 0
 
     print(f"\nDataframe of rho values and their uncertainties:\n{rho_df}\n")
     rho_df.to_csv(f"{rho_csv_name}")
@@ -174,46 +181,51 @@ def calc_params_void(rho_csv_name, params_csv_name):
     rods = [c for c in rho_df.columns.values.tolist() if "unc" not in c]
     heights = rho_df.index.values.tolist()
 
-    beta_eff = 0.0075
-    react_add_rate_limit = 0.16
-    motor_speed = {"safe": 19, "shim": 11, "reg": 24}  # inches/min
-
-    parameters = ["worth ($)", "max worth added per % height ($/%)", "max worth added per height ($/in)",
-                  "reactivity addition rate ($/sec)", "max motor speed (in/min)"]
+    parameters = ['density', 'D density', 'D rho', 'rho unc', 'D dollars', 'dollars unc',
+                  'void rho', 'void rho unc', 'void dollars', 'void dollars unc']
 
     # Setup a dataframe to collect rho values
+    # Here, 'D' stands for $\Delta$, i.e., macroscopic change
     params_df = pd.DataFrame(columns=parameters)  # use lower cases to match 'rods' def above
-    params_df["rod"] = rods
-    params_df.set_index("rod", inplace=True)
+    params_df['density'] = WATER_DENSITIES
+    params_df.set_index('density', inplace=True)
+    params_df['D density'] = [round(1.0-x, 1) for x in WATER_DENSITIES]
+    params_df['D rho'] = rho_df['rho']
+    params_df['rho unc'] = rho_df['rho unc']
+    params_df['D dollars'] = rho_df['dollars']
+    params_df['dollars unc'] = rho_df['dollars unc']
 
-    for rod in rods:  # We want to sort our curves by rods
-        rho = rho_df[f"{rod}"].tolist()
-        # worth ($) = rho / beta_eff, rho values are in % rho per NIST standard
-        worth = 0.01 * float(max(rho)) / float(beta_eff)
-        params_df.loc[rod, parameters[0]] = worth
-
-        int_eq = np.polyfit(heights, rho, 3)  # coefs of integral worth curve equation
-        dif_eq = -1 * np.polyder(int_eq)
-        max_worth_rate_per = 0.01 * max(np.polyval(dif_eq, heights)) / float(beta_eff)
-        params_df.loc[rod, parameters[1]] = max_worth_rate_per
-
-        max_worth_rate_inch = float(max_worth_rate_per) / float(CM_PER_PERCENT_HEIGHT) * 2.54
-        params_df.loc[rod, parameters[2]] = max_worth_rate_inch
-
-        # Normal rod motion speed is about:
-        # 19 inches (48.3 cm) per minute for the Safe rod,
-        # 11 inches (27.9 cm) per minute for the Shim rod,
-        # 24 inches (61.0 cm) per minute for the Reg rod.
-
-        react_add_rate = motor_speed[rod] * max_worth_rate_inch / 60
-        params_df.loc[rod, parameters[3]] = react_add_rate
-
-        max_motor_speed = 1 / max_worth_rate_inch * react_add_rate_limit * 60
-        params_df.loc[rod, parameters[4]] = max_motor_speed
+    for water_density in WATER_DENSITIES:
+        if water_density == 1.0:
+            params_df.loc[water_density, 'void rho'], params_df.loc[water_density, 'void rho unc'], \
+            params_df.loc[water_density, 'void dollars'], params_df.loc[water_density, 'void dollars unc'] = 0, 0, 0, 0
+        else:
+            params_df.loc[water_density, 'void rho'] = params_df.loc[water_density, 'D rho'] / 10/params_df.loc[water_density, 'D density']
+            params_df.loc[water_density, 'void rho unc'] = params_df.loc[water_density, 'rho unc'] / 10/params_df.loc[water_density, 'D density']
+            params_df.loc[water_density, 'void dollars'] = params_df.loc[water_density, 'D dollars'] / 10/params_df.loc[water_density, 'D density']
+            params_df.loc[water_density, 'void dollars unc'] = params_df.loc[water_density, 'dollars unc'] / 10/params_df.loc[water_density, 'D density']
 
     print(f"\nVarious rod parameters:\n{params_df}")
     params_df.to_csv(params_csv_name)
 
+"""
+prints dictionary of 'polynomial' and 'r-squared'
+e.g., {'polynomial': [-0.0894, 0.234, 0.8843], 'r-squared': 0.960}
+"""
+def find_poly_reg(x, y, degree):
+    results = {}
+    coeffs = np.polyfit(x, y, degree)
+    # Polynomial Coefficients
+    results['polynomial'] = coeffs.tolist()
+    # r-squared
+    p = np.poly1d(coeffs)
+    # fit values, and mean
+    yhat = p(x)  # or [p(z) for z in x]
+    ybar = np.sum(y) / len(y)  # or sum(y)/len(y)
+    ssreg = np.sum((yhat - ybar) ** 2)  # or sum([ (yihat - ybar)**2 for yihat in yhat])
+    sstot = np.sum((y - ybar) ** 2)  # or sum([ (yi - ybar)**2 for yi in y])
+    results['r-squared'] = ssreg / sstot
+    return results
 
 '''
 Plots integral and differential worths given a CSV of rho and uncertainties.
@@ -225,12 +237,13 @@ Does not return anything. Only produces a figure.
 
 NB: Major plot settings have been organized into variables for your personal convenience.
 '''
-def plot_data_void(keff_csv_name, rho_csv_name, figure_name, rho_or_dollars):
+def plot_data_void(keff_csv_name, rho_csv_name, params_csv_name, figure_name, rho_or_dollars, for_fun=False):
     if rho_or_dollars.lower() in ['r','p','rho']: rho_or_dollars = 'rho'
     elif rho_or_dollars.lower() in ['d','dollar','dollars']: rho_or_dollars = 'dollars'
 
     keff_df = pd.read_csv(keff_csv_name, index_col=0)
     rho_df = pd.read_csv(rho_csv_name, index_col=0)
+    params_df = pd.read_csv(params_csv_name, index_col=0)
     water_densities = rho_df.index.values.tolist()
 
     # Personal parameters, to be used in plot settings below.
@@ -238,84 +251,117 @@ def plot_data_void(keff_csv_name, rho_csv_name, figure_name, rho_or_dollars):
     legend_fontsize = "x-large"
     # fontsize: int or {'xx-small', 'x-small', 'small', 'medium', 'large', 'x-large', 'xx-large'}
     my_dpi = 320
-    x_label = "Water density (g/cc)"
-    y_label_keff = r"Effective multiplication factor ($k_{eff}$)"
-    if rho_or_dollars == 'rho': y_label_void = r"Void coefficient (\$/%)"
-    elif rho_or_dollars == 'dollars': y_label_void = r"Void coefficient ((%$\Delta$k/k)/%)"
+    x_label = r"Water density "# (g/cm$^3$)"
+    y_label_keff, y_label_rho, y_label_void = r"Effective multiplication factor ($k_{eff}$)", \
+                                              r"Reactivity ($\%\Delta k/k$)", \
+                                              r"Void coefficient ((%$\Delta k/k$)/%)"
+    if rho_or_dollars == 'dollars':
+        y_label_rho, y_label_void= r"Reactivity ($)", r"Void coefficient (\$/%)"
+
     plot_color = ["tab:red","tab:blue","tab:green"]
 
-    ax_keff_x_min, ax_keff_x_max = 0, 2
-    ax_keff_y_min, ax_keff_y_max = 0.85, 1.2
-    ax_keff_x_major_ticks_interval = 0.1
-    ax_keff_x_minor_ticks_interval = 0.05
-    ax_keff_y_major_ticks_interval = 0.05
-    ax_keff_y_minor_ticks_interval = 0.025
+    ax_x_min, ax_x_max = 0.05, 1.05
+    ax_x_major_ticks_interval, ax_x_minor_ticks_interval = 0.1, 0.025
+    if for_fun:
+        ax_x_min, ax_x_max = 0, 2
+        ax_x_major_ticks_interval, ax_x_minor_ticks_interva = 0.1, 0.05
 
-    ax_rho_x_min, ax_rho_x_max = 0, 2
-    ax_rho_y_min, ax_rho_y_max = -15.5, 0.5
-    ax_rho_y_min_dollars, ax_rho_y_max_dollars = -15.5, 0.5
-    ax_rho_x_major_ticks_interval, ax_rho_x_minor_ticks_interval = 0.1, 0.05
-    ax_rho_y_major_ticks_interval, ax_rho_y_minor_ticks_interval = 1, 0.5
-    ax_rho_y_major_ticks_interval_dollars, ax_rho_y_minor_ticks_interval_dollars = 1, 0.5
+    ax_keff_y_min, ax_keff_y_max = 0.8, 1.15
+    ax_keff_y_major_ticks_interval, ax_keff_y_minor_ticks_interval = 0.05, 0.025
 
-    ax_void_x_min, ax_void_x_max = 0, 2
-    ax_void_y_min, ax_void_y_max = 0.85, 1.2
-    ax_void_y_min_dollars, ax_void_y_max_dollars = 0.85, 1.2
-    ax_void_x_major_ticks_interval = 0.1
-    ax_void_x_minor_ticks_interval = 0.05
-    ax_void_y_major_ticks_interval = 0.05
-    ax_void_y_minor_ticks_interval = 0.025
-    ax_void_y_major_ticks_interval_dollars = 1
-    ax_void_y_minor_ticks_interval_dollars = 0.5
+    ax_rho_y_min, ax_rho_y_max = -16, 1
+    ax_rho_y_major_ticks_interval, ax_rho_y_minor_ticks_interval = 2, 1
+    if rho_or_dollars == 'dollars':
+        ax_rho_y_min, ax_rho_y_max = -22, 1.0
+        ax_rho_y_major_ticks_interval, ax_rho_y_minor_ticks_interval = 2, 1
 
-    fig, axs = plt.subplots(2, 1, figsize=(1636 / 96, 3 * 673 / 96), dpi=my_dpi, facecolor='w', edgecolor='k')
+    ax_void_y_min, ax_void_y_max = -40, 5
+    ax_void_y_major_ticks_interval, ax_void_y_minor_ticks_interval = 5, 2.5
+    if rho_or_dollars == 'dollars':
+        ax_void_y_min, ax_void_y_max = -50, 5
+        ax_void_y_major_ticks_interval, ax_void_y_minor_ticks_interval = 5, 2.5
+
+    fig, axs = plt.subplots(3, 1, figsize=(1636 / 96, 3 * 673 / 96), dpi=my_dpi, facecolor='w', edgecolor='k')
     ax_keff, ax_rho, ax_void = axs[0], axs[1], axs[2]  # integral, differential worth on top, bottom, resp.
 
-
     # Plot data for keff.
-    y_keff = keff_df[f'keff'].tolist()
-    y_keff_unc = keff_df[f'keff unc'].tolist()
+    x = [water_density for water_density in water_densities if water_density <= 1]
+    if for_fun: x = water_densities
+    x_fit = np.linspace(min(x), max(x), len(water_densities))
+    y_keff, y_keff_unc = [], []
+    for water_density in x:
+        y_keff.append(keff_df.loc[water_density,'keff']), y_keff_unc.append(keff_df.loc[water_density,'keff unc'])
 
-    ax_keff.errorbar(water_densities, y_keff, yerr=y_keff_unc,
+    ax_keff.errorbar(x, y_keff, yerr=y_keff_unc,
                      marker="o", ls="none",
                      color=plot_color[0], elinewidth=2, capsize=3, capthick=2)
 
-    eq_keff = np.polyfit(water_densities, y_keff, 3)  # coefs of integral worth curve equation
-    x_fit = np.linspace(water_densities[0], water_densities[-1], len(water_densities))
-    y_fit_keff = np.polyval(eq_keff, x_fit)
+    eq_keff = find_poly_reg(x, y_keff, 2)['polynomial']  # n=2 order fit
+    r2_keff = find_poly_reg(x, y_keff, 2)['r-squared']
+    sd_keff = np.average(np.abs(np.polyval(np.polyfit(x, y_keff, 2), x) - y_keff))
+    y_fit_keff = np.polyval(eq_keff, x)
 
-    slope, intercept, r_value, p_value, std_err = stats.linregress(x_fit, y_fit_keff)
-    ax_keff.plot(x_fit, y_fit_keff, color=plot_color[0], label=r'y={:.2f}x+{:.2f}   $R^2$={:.2f}    $\sigma$={:.2f}'.format(slope,intercept, r_value, std_err))
+    ax_keff.plot(x, y_fit_keff, color=plot_color[0],
+                 label=r'y=-{:.3f}$x^2$+{:.2f}$x$+{:.2f}   $R^2$={:.2f}    $\sigma$={:.4f}'.format(
+                     np.abs(eq_keff[0]),eq_keff[1], eq_keff[2], r2_keff, sd_keff))
 
     # Plot data for reactivity
-    y_rho = rho_df[f'rho'].tolist()
-    y_rho_unc = rho_df[f'rho unc'].tolist()
+    y_rho, y_rho_unc = [], []
+    for water_density in x:
+        if rho_or_dollars == 'rho': y_rho.append(rho_df.loc[water_density,'rho']), y_rho_unc.append(rho_df.loc[water_density,'rho unc'])
+        if rho_or_dollars == 'dollars': y_rho.append(rho_df.loc[water_density, 'dollars']), y_rho_unc.append(rho_df.loc[water_density, 'dollars unc'])
 
-    ax_rho.errorbar(water_densities, y_rho, yerr=y_rho_unc,
+    ax_rho.errorbar(x, y_rho, yerr=y_rho_unc,
                      marker="o", ls="none",
                      color=plot_color[1], elinewidth=2, capsize=3, capthick=2)
 
-    eq_rho = np.polyfit(water_densities, y_keff, 3)  # coefs of integral worth curve equation
-    x_fit = np.linspace(water_densities[0], water_densities[-1], len(water_densities))
+    eq_rho = find_poly_reg(x, y_rho, 2)['polynomial']  # n=2 order fit
+    r2_rho = find_poly_reg(x, y_rho, 2)['r-squared']
+    sd_rho = np.average(np.abs(np.polyval(np.polyfit(x, y_rho, 2), x) - y_rho))
     y_fit_rho = np.polyval(eq_rho, x_fit)
 
-    slope, intercept, r_value, p_value, std_err = stats.linregress(x_fit, y_fit_rho)
-    ax_keff.plot(x_fit, y_fit_rho, color=plot_color[1], label=r'y={:.2f}x+{:.2f}   $R^2$={:.2f}    $\sigma$={:.2f}'.format(slope,intercept, r_value, std_err))
+    ax_rho.plot(x_fit, y_fit_rho, color=plot_color[1],
+                label=r'y=-{:.1f}$x^2$+{:.0f}$x${:.0f}   $R^2$={:.2f}    $\sigma$={:.2f}'.format(
+                    np.abs(eq_rho[0]), eq_rho[1], eq_rho[2], r2_rho, sd_rho))
+
+    # Plot data for void
+    y_void, y_void_unc = [], []
+    for water_density in x:
+        if rho_or_dollars == 'rho': y_void.append(params_df.loc[water_density,'void rho']), y_void_unc.append(params_df.loc[water_density, 'void rho unc'])
+        else: y_void.append(params_df.loc[water_density, 'void dollars']), y_void_unc.append(params_df.loc[water_density, 'void dollars unc'])
+
+    ax_void.errorbar(x, y_void, yerr=y_void_unc,
+                     marker="o", ls="none",
+                     color=plot_color[2], elinewidth=2, capsize=3, capthick=2)
+
+    eq_void = find_poly_reg(x, y_void, 1)['polynomial']
+    r2_void = find_poly_reg(x, y_void, 1)['r-squared']
+    sd_void = np.average(np.abs(np.polyval(np.polyfit(x, y_void, 1), x) - y_void))
+    y_fit_void = np.polyval(eq_void, x_fit)
+
+    ax_void.plot(x_fit, y_fit_void, color=plot_color[2],
+                label=r'y={:.1f}$x${:.0f}   $R^2$={:.2f}    $\sigma$={:.2f}'.format(
+                    np.abs(eq_void[0]), eq_void[1], r2_void, sd_void))
+
+    eq_void_der = -1*np.polyder(eq_rho)  # n=2 order fit
+    y_fit_void_der = np.polyval(eq_void_der, x_fit)
+
+    ax_void.plot(x_fit, y_fit_void_der, color=plot_color[2], linestyle='dashed',
+                label=r'y={:.1f}$x${:.0f}'.format(np.abs(eq_void_der[0]), eq_void_der[1]))
+
+
 
 
     # Keff plot settings
-    ax_keff.set_xlim([ax_keff_x_min, ax_keff_x_max])
+    ax_keff.set_xlim([ax_x_min, ax_x_max])
     ax_keff.set_ylim([ax_keff_y_min, ax_keff_y_max])
-
-    ax_keff.xaxis.set_major_locator(MultipleLocator(ax_keff_x_major_ticks_interval))
+    ax_keff.xaxis.set_major_locator(MultipleLocator(ax_x_major_ticks_interval))
     ax_keff.yaxis.set_major_locator(MultipleLocator(ax_keff_y_major_ticks_interval))
-
     ax_keff.minorticks_on()
-    ax_keff.xaxis.set_minor_locator(MultipleLocator(ax_keff_x_minor_ticks_interval))
+    ax_keff.xaxis.set_minor_locator(MultipleLocator(ax_x_minor_ticks_interval))
     ax_keff.yaxis.set_minor_locator(MultipleLocator(ax_keff_y_minor_ticks_interval))
 
     ax_keff.tick_params(axis='both', which='major', labelsize=label_fontsize)
-
     ax_keff.grid(b=True, which='major', color='#999999', linestyle='-', linewidth='1')
     ax_keff.grid(which='minor', linestyle=':', linewidth='1', color='gray')
 
@@ -323,38 +369,47 @@ def plot_data_void(keff_csv_name, rho_csv_name, figure_name, rho_or_dollars):
     ax_keff.set_ylabel(y_label_keff, fontsize=label_fontsize)
     ax_keff.legend(title=f'Key', title_fontsize=legend_fontsize, ncol=1, fontsize=legend_fontsize, loc='lower right')
 
+
     # Reactivity worth plot settings
-    ax_rho.set_xlim([ax_rho_x_min, ax_rho_x_max])
+    ax_rho.set_xlim([ax_x_min, ax_x_max])
     ax_rho.set_ylim([ax_rho_y_min, ax_rho_y_max])
-
-    ax_rho.minorticks_on()
-
-    ax_rho.xaxis.set_major_locator(MultipleLocator(ax_rho_x_major_ticks_interval))
+    ax_rho.xaxis.set_major_locator(MultipleLocator(ax_x_major_ticks_interval))
     ax_rho.yaxis.set_major_locator(MultipleLocator(ax_rho_y_major_ticks_interval))
-
-    ax_rho.xaxis.set_minor_locator(MultipleLocator(ax_rho_x_minor_ticks_interval))
+    ax_rho.minorticks_on()
+    ax_rho.xaxis.set_minor_locator(MultipleLocator(ax_x_minor_ticks_interval))
     ax_rho.yaxis.set_minor_locator(MultipleLocator(ax_rho_y_minor_ticks_interval))
 
-    # Overwrite set_ylim above for dollar units
-    if rho_or_dollars == "dollars":
-        ax_rho.set_ylim([-0.25, 3.5])  # Use for dollars units
-        ax_rho.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))  # Use for 2 decimal places after 0. for dollars units
-
-        ax_rho.xaxis.set_major_locator(MultipleLocator(10))
-        ax_rho.yaxis.set_major_locator(MultipleLocator(0.5))
-
-        ax_rho.xaxis.set_minor_locator(MultipleLocator(2.5))
-        ax_rho.yaxis.set_minor_locator(MultipleLocator(0.125))
-
+    # Use for 2 decimal places after 0. for dollars units
+    if rho_or_dollars == "dollars": ax_rho.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
 
     ax_rho.tick_params(axis='both', which='major', labelsize=label_fontsize)
-
     ax_rho.grid(b=True, which='major', color='#999999', linestyle='-', linewidth='1')
     ax_rho.grid(which='minor', linestyle=':', linewidth='1', color='gray')
 
     ax_rho.set_xlabel(x_label, fontsize=label_fontsize)
     ax_rho.set_ylabel(y_label_rho, fontsize=label_fontsize)
-    ax_rho.legend(title=f'Key', title_fontsize=legend_fontsize, ncol=4, fontsize=legend_fontsize, loc='upper right')
+    ax_rho.legend(title=f'Key', title_fontsize=legend_fontsize, ncol=4, fontsize=legend_fontsize, loc='lower right')
+
+
+    # Void worth plot settings
+    ax_void.set_xlim([ax_x_min, ax_x_max])
+    ax_void.set_ylim([ax_void_y_min, ax_void_y_max])
+    ax_void.xaxis.set_major_locator(MultipleLocator(ax_x_major_ticks_interval))
+    ax_void.yaxis.set_major_locator(MultipleLocator(ax_void_y_major_ticks_interval))
+    ax_void.minorticks_on()
+    ax_void.xaxis.set_minor_locator(MultipleLocator(ax_x_minor_ticks_interval))
+    ax_void.yaxis.set_minor_locator(MultipleLocator(ax_void_y_minor_ticks_interval))
+
+    # Use for 2 decimal places after 0. for dollars units
+    if rho_or_dollars == "dollars": ax_void.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+    ax_void.tick_params(axis='both', which='major', labelsize=label_fontsize)
+    ax_void.grid(b=True, which='major', color='#999999', linestyle='-', linewidth='1')
+    ax_void.grid(which='minor', linestyle=':', linewidth='1', color='gray')
+
+    ax_void.set_xlabel(x_label, fontsize=label_fontsize)
+    ax_void.set_ylabel(y_label_void, fontsize=label_fontsize)
+    ax_void.legend(title=f'Key', title_fontsize=legend_fontsize, ncol=4, fontsize=legend_fontsize, loc='lower right')
 
 
     plt.savefig(f"{figure_name.split('.')[0]}_{rho_or_dollars}.{figure_name.split('.')[-1]}", bbox_inches='tight',
