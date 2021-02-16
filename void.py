@@ -104,8 +104,7 @@ def main():
 
     convert_keff_to_rho_void(KEFF_CSV_NAME, RHO_CSV_NAME)
     calc_params_void(RHO_CSV_NAME, PARAMS_CSV_NAME)
-    for rho_or_dollars in ['rho','dollars']: plot_data_void(KEFF_CSV_NAME, RHO_CSV_NAME, PARAMS_CSV_NAME,
-                                                            FIGURE_NAME, rho_or_dollars)
+    for rho_or_dollars in ['rho','dollars']: plot_data_void(KEFF_CSV_NAME, RHO_CSV_NAME, PARAMS_CSV_NAME, FIGURE_NAME, rho_or_dollars)
 
     print(f"\n************************ PROGRAM COMPLETE ************************\n")
 
@@ -182,14 +181,14 @@ def calc_params_void(rho_csv_name, params_csv_name):
     heights = rho_df.index.values.tolist()
 
     parameters = ['density', 'D density %', 'D rho', 'rho unc', 'D dollars', 'dollars unc',
-                  'void rho', 'void rho unc', 'void dollars', 'void dollars unc']
+                  'void rho', 'void rho avg', 'void rho unc', 'void dollars', 'void dollars avg', 'void dollars unc']
 
     # Setup a dataframe to collect rho values
     # Here, 'D' stands for $\Delta$, i.e., macroscopic change
     params_df = pd.DataFrame(columns=parameters)  # use lower cases to match 'rods' def above
     params_df['density'] = WATER_DENSITIES
     params_df.set_index('density', inplace=True)
-    params_df['D density %'] = [100*round(1.0-x, 1) for x in WATER_DENSITIES]
+    # params_df['D density %'] = [100*round(1.0-x, 1) for x in WATER_DENSITIES]
     params_df['D rho'] = rho_df['rho']
     params_df['rho unc'] = rho_df['rho unc']
     params_df['D dollars'] = rho_df['dollars']
@@ -197,13 +196,32 @@ def calc_params_void(rho_csv_name, params_csv_name):
 
     for water_density in WATER_DENSITIES:
         if water_density == 1.0:
+            params_df.loc[water_density, 'D density %'] = 100 * round(1.0 - water_density, 1)
             params_df.loc[water_density, 'void rho'], params_df.loc[water_density, 'void rho unc'], \
-            params_df.loc[water_density, 'void dollars'], params_df.loc[water_density, 'void dollars unc'] = 0, 0, 0, 0
+            params_df.loc[water_density, 'void dollars'], params_df.loc[water_density, 'void dollars unc'], \
+            params_df.loc[water_density, 'void rho avg'], params_df.loc[water_density, 'void dollars avg'] = 0, 0, 0, 0, 0, 0
         else:
+            params_df.loc[water_density, 'D density %'] = 100 * round(1.0 - water_density, 1)
             params_df.loc[water_density, 'void rho'] = params_df.loc[water_density, 'D rho'] / params_df.loc[water_density, 'D density %']
+            """params_df.loc[water_density, 'void rho avg'] =np.mean(np.polyval(np.polyfit(
+                [x for x in params_df['D density %'].tolist() if str(x).lower() != 'nan'],
+                [y for y in params_df['void rho'].tolist() if str(y).lower() != 'nan'], 1),
+                [x for x in params_df['D density %'].tolist() if str(x).lower() != 'nan']))"""
             params_df.loc[water_density, 'void rho unc'] = params_df.loc[water_density, 'rho unc'] / params_df.loc[water_density, 'D density %']
             params_df.loc[water_density, 'void dollars'] = params_df.loc[water_density, 'D dollars'] / params_df.loc[water_density, 'D density %']
+            """params_df.loc[water_density, 'void dollars avg'] = np.mean(np.polyval(np.polyfit(
+                [x for x in params_df['D density %'].tolist() if str(x).lower() != 'nan'],
+                [y for y in params_df['void dollars'].tolist() if str(y).lower() != 'nan'], 1),
+                [x for x in params_df['D density %'].tolist() if str(x).lower() != 'nan']))"""
             params_df.loc[water_density, 'void dollars unc'] = params_df.loc[water_density, 'dollars unc'] / params_df.loc[water_density, 'D density %']
+
+    for water_density in WATER_DENSITIES:
+        x = [i for i in WATER_DENSITIES if water_density<= i <= 1.0]
+        if len(x) > 1:
+            y_rho = params_df.loc[x, 'void rho'].tolist()
+            params_df.loc[water_density, 'void rho avg'] = np.mean(np.polyval(np.polyfit(x, y_rho, 1), x))
+            y_dollars = params_df.loc[x, 'void dollars'].tolist()
+            params_df.loc[water_density, 'void dollars avg'] = np.mean(np.polyval(np.polyfit(x, y_dollars, 1), x))
 
     print(f"\nVarious rod parameters:\n{params_df}")
     params_df.to_csv(params_csv_name)
