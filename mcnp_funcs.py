@@ -385,7 +385,9 @@ def change_cell_densities(filepath, module_name, cell_densities_dict, base_input
                 new_input_deck.write(line)
                 continue
             else:
-                new_input_deck.write(f"{' '.join(line.split())}\n") # removes multi-spaces for proper MCNP syntax highlighting
+                new_input_deck.write(line)
+                # new_input_deck.write(f"{' '.join(line.split())}\n") # removes multi-spaces for proper MCNP syntax highlighting
+                # ^that causes way too many issues for multi-line arguments
                 continue
 
     base_input_deck.close()
@@ -429,4 +431,45 @@ def edit_cell_density_code(line, mat_card, new_density):
         new_line = ' '.join(entries)
 
     return new_line
+
+def convert_keff_to_rho(keff_csv_name,rho_csv_name):
+    # Assumes the keff.csv has columns labeled "rod" and "rod unc" for keff and keff uncertainty values for a given rod
+    keff_df = pd.read_csv(keff_csv_name,index_col=0)
+    rods = [c for c in keff_df.columns.values.tolist() if "unc" not in c]
+    heights = keff_df.index.values.tolist()
+
+    # Setup a dataframe to collect rho values
+    rho_df = pd.DataFrame(columns=keff_df.columns.values.tolist()) # use lower cases to match 'rods' def above
+    rho_df["height"] = heights
+    rho_df.set_index("height",inplace=True)
+
+    '''
+    ERROR PROPAGATION FORMULAE
+    % Delta rho = 100* frac{k2-k1}{k2*k1}
+    numerator = k2-k1
+    delta num = sqrt{(delta k2)^2 + (delta k1)^2}
+    denominator = k2*k1
+    delta denom = k2*k1*sqrt{(frac{delta k2}{k2})^2 + (frac{delta k1}{k1})^2}
+    delta % Delta rho = 100*sqrt{(frac{delta num}{num})^2 + (frac{delta denom}{denom})^2}
+    '''   
+    for rod in rods: 
+        for height in heights: 
+            k1 = keff_df.loc[height,rod]
+            k2 = keff_df.loc[heights[-1],rod]
+            dk1 = keff_df.loc[height,f"{rod} unc"] 
+            dk2 = keff_df.loc[heights[-1],f"{rod} unc"] 
+            k2_minus_k1 = k2-k1
+            k2_times_k1 = k2*k1
+            d_k2_minus_k1 = np.sqrt(dk2**2+dk1**2)
+            d_k2_times_k1 = k2*k1*np.sqrt((dk2/k2)**2+(dk1/k1)**2)
+            rho = (k2-k1)/(k2*k1)*100
+
+            rho_df.loc[height,rod] = rho
+            if k2_minus_k1 != 0: 
+                d_rho = rho*np.sqrt((d_k2_minus_k1/k2_minus_k1)**2+(d_k2_times_k1/k2_times_k1)**2)
+                rho_df.loc[height,f"{rod} unc"] = d_rho
+            else: rho_df.loc[height,f"{rod} unc"] = 0
+
+    print(f"\nDataframe of rho values and their uncertainties:\n{rho_df}\n")
+    rho_df.to_csv(f"{rho_csv_name}")
 
