@@ -79,10 +79,10 @@ def main():
     print(f"Created {num_inputs_created} new input decks.\n"
           f"--Skipped {num_inputs_skipped} input decks because they already exist.")
 
-    # if not check_run_mcnp(): sys.exit()
+    if not check_run_mcnp(): sys.exit()
 
     # Run MCNP for all .i files in f".\{inputs_folder_name}".
-    tasks = 12 # get_tasks()
+    tasks = get_tasks()
     for file in os.listdir(f"{FILEPATH}/{INPUTS_FOLDER_NAME}"):
         run_mcnp(FILEPATH,f"{FILEPATH}/{INPUTS_FOLDER_NAME}/{file}",OUTPUTS_FOLDER_NAME,tasks)
 
@@ -102,148 +102,14 @@ def main():
     print(f"\nDataframe of keff values and their uncertainties:\n{keff_df}\n")
     keff_df.to_csv(KEFF_CSV_NAME)
 
-    convert_keff_to_rho_void(KEFF_CSV_NAME, RHO_CSV_NAME)
-    calc_params_void(RHO_CSV_NAME, PARAMS_CSV_NAME)
+    convert_keff_to_rho_coef(KEFF_CSV_NAME, RHO_CSV_NAME)
+    calc_params_coef(RHO_CSV_NAME, PARAMS_CSV_NAME, MODULE_NAME)
     for rho_or_dollars in ['rho','dollars']: plot_data_void(KEFF_CSV_NAME, RHO_CSV_NAME, PARAMS_CSV_NAME, FIGURE_NAME, rho_or_dollars)
 
     print(f"\n************************ PROGRAM COMPLETE ************************\n")
 
 
-'''
-Converts a CSV of keff and uncertainty values to a CSV of rho and uncertainty values.
 
-keff_csv_name: str, name of CSV of keff values, including extension, "keff.csv"
-rho_csv_name: str, desired name of CSV of rho values, including extension, "rho.csv"
-
-Does not return anything. Only makes the actual file changes.
-'''
-def convert_keff_to_rho_void(keff_csv_name,rho_csv_name):
-    # Assumes the keff.csv has columns labeled "rod" and "rod unc" for keff and keff uncertainty values for a given rod
-    keff_df = pd.read_csv(keff_csv_name,index_col=0)
-    rods = [c for c in keff_df.columns.values.tolist() if "unc" not in c]
-    water_densities = keff_df.index.values.tolist()
-
-    # Setup a dataframe to collect rho values
-    rho_df = pd.DataFrame(columns=keff_df.columns.values.tolist()) # use lower cases to match 'rods' def above
-    rho_df.columns = ['rho', 'rho unc']
-    rho_df["density"] = water_densities
-    rho_df.set_index("density", inplace=True)
-
-    '''
-    ERROR PROPAGATION FORMULAE
-    % Delta rho = 100* frac{k2-k1}{k2*k1}
-    numerator = k2-k1
-    delta num = sqrt{(delta k2)^2 + (delta k1)^2}
-    denominator = k2*k1
-    delta denom = k2*k1*sqrt{(frac{delta k2}{k2})^2 + (frac{delta k1}{k1})^2}
-    delta % Delta rho = 100*sqrt{(frac{delta num}{num})^2 + (frac{delta denom}{denom})^2}
-    '''
-
-    for water_density in water_densities:
-        k1 = keff_df.loc[water_density,'keff']
-        k2 = keff_df.loc[1.0,'keff']
-        dk1 = keff_df.loc[water_density,'keff unc']
-        dk2 = keff_df.loc[1.0,'keff unc']
-        k2_minus_k1 = k2-k1
-        k2_times_k1 = k2*k1
-        d_k2_minus_k1 = np.sqrt(dk2**2+dk1**2)
-        d_k2_times_k1 = k2*k1*np.sqrt((dk2/k2)**2+(dk1/k1)**2)
-        rho = -(k2-k1)/(k2*k1)*100
-        dollars = 0.01*rho/BETA_EFF
-
-        rho_df.loc[water_density, 'rho'] = rho
-        rho_df.loc[water_density, 'dollars'] = dollars
-        # while the 'dollars' (and 'dollars unc') columns are not in the original rho_df definition,
-        # simply defining a value inside it automatically adds the column
-        if k2_minus_k1 != 0:
-            rho_unc = rho*np.sqrt((d_k2_minus_k1/k2_minus_k1)**2+(d_k2_times_k1/k2_times_k1)**2)
-            dollars_unc = rho_unc/100/BETA_EFF
-            rho_df.loc[water_density,'rho unc'], rho_df.loc[water_density,'dollars unc'] = rho_unc, dollars_unc
-        else: rho_df.loc[water_density, 'rho unc'], rho_df.loc[water_density, 'dollars unc'] = 0, 0
-
-    print(f"\nDataframe of rho values and their uncertainties:\n{rho_df}\n")
-    rho_df.to_csv(f"{rho_csv_name}")
-
-
-'''
-Calculates a few other rod parameters.
-
-rho_csv_name: str, name of CSV of rho values to read from, e.g. "rho.csv"
-params_csv_name: str, desired name of CSV of rod parameters, e.g. "rod_parameters.csv"
-
-Does not return anything. Only performs file creation.
-'''
-
-
-def calc_params_void(rho_csv_name, params_csv_name):
-    rho_df = pd.read_csv(rho_csv_name, index_col=0)
-    rods = [c for c in rho_df.columns.values.tolist() if "unc" not in c]
-    heights = rho_df.index.values.tolist()
-
-    parameters = ['density', 'D density %', 'D rho', 'rho unc', 'D dollars', 'dollars unc',
-                  'void rho', 'void rho avg', 'void rho unc', 'void dollars', 'void dollars avg', 'void dollars unc']
-
-    # Setup a dataframe to collect rho values
-    # Here, 'D' stands for $\Delta$, i.e., macroscopic change
-    params_df = pd.DataFrame(columns=parameters)  # use lower cases to match 'rods' def above
-    params_df['density'] = WATER_DENSITIES
-    params_df.set_index('density', inplace=True)
-    # params_df['D density %'] = [100*round(1.0-x, 1) for x in WATER_DENSITIES]
-    params_df['D rho'] = rho_df['rho']
-    params_df['rho unc'] = rho_df['rho unc']
-    params_df['D dollars'] = rho_df['dollars']
-    params_df['dollars unc'] = rho_df['dollars unc']
-
-    for water_density in WATER_DENSITIES:
-        if water_density == 1.0:
-            params_df.loc[water_density, 'D density %'] = 100 * round(1.0 - water_density, 1)
-            params_df.loc[water_density, 'void rho'], params_df.loc[water_density, 'void rho unc'], \
-            params_df.loc[water_density, 'void dollars'], params_df.loc[water_density, 'void dollars unc'], \
-            params_df.loc[water_density, 'void rho avg'], params_df.loc[water_density, 'void dollars avg'] = 0, 0, 0, 0, 0, 0
-        else:
-            params_df.loc[water_density, 'D density %'] = 100 * round(1.0 - water_density, 1)
-            params_df.loc[water_density, 'void rho'] = params_df.loc[water_density, 'D rho'] / params_df.loc[water_density, 'D density %']
-            """params_df.loc[water_density, 'void rho avg'] =np.mean(np.polyval(np.polyfit(
-                [x for x in params_df['D density %'].tolist() if str(x).lower() != 'nan'],
-                [y for y in params_df['void rho'].tolist() if str(y).lower() != 'nan'], 1),
-                [x for x in params_df['D density %'].tolist() if str(x).lower() != 'nan']))"""
-            params_df.loc[water_density, 'void rho unc'] = params_df.loc[water_density, 'rho unc'] / params_df.loc[water_density, 'D density %']
-            params_df.loc[water_density, 'void dollars'] = params_df.loc[water_density, 'D dollars'] / params_df.loc[water_density, 'D density %']
-            """params_df.loc[water_density, 'void dollars avg'] = np.mean(np.polyval(np.polyfit(
-                [x for x in params_df['D density %'].tolist() if str(x).lower() != 'nan'],
-                [y for y in params_df['void dollars'].tolist() if str(y).lower() != 'nan'], 1),
-                [x for x in params_df['D density %'].tolist() if str(x).lower() != 'nan']))"""
-            params_df.loc[water_density, 'void dollars unc'] = params_df.loc[water_density, 'dollars unc'] / params_df.loc[water_density, 'D density %']
-
-    for water_density in WATER_DENSITIES:
-        x = [i for i in WATER_DENSITIES if water_density<= i <= 1.0]
-        if len(x) > 1:
-            y_rho = params_df.loc[x, 'void rho'].tolist()
-            params_df.loc[water_density, 'void rho avg'] = np.mean(np.polyval(np.polyfit(x, y_rho, 1), x))
-            y_dollars = params_df.loc[x, 'void dollars'].tolist()
-            params_df.loc[water_density, 'void dollars avg'] = np.mean(np.polyval(np.polyfit(x, y_dollars, 1), x))
-
-    print(f"\nVarious rod parameters:\n{params_df}")
-    params_df.to_csv(params_csv_name)
-
-"""
-prints dictionary of 'polynomial' and 'r-squared'
-e.g., {'polynomial': [-0.0894, 0.234, 0.8843], 'r-squared': 0.960}
-"""
-def find_poly_reg(x, y, degree):
-    results = {}
-    coeffs = np.polyfit(x, y, degree)
-    # Polynomial Coefficients
-    results['polynomial'] = coeffs.tolist()
-    # r-squared
-    p = np.poly1d(coeffs)
-    # fit values, and mean
-    yhat = p(x)  # or [p(z) for z in x]
-    ybar = np.sum(y) / len(y)  # or sum(y)/len(y)
-    ssreg = np.sum((yhat - ybar) ** 2)  # or sum([ (yihat - ybar)**2 for yihat in yhat])
-    sstot = np.sum((y - ybar) ** 2)  # or sum([ (yi - ybar)**2 for yi in y])
-    results['r-squared'] = ssreg / sstot
-    return results
 
 '''
 Plots integral and differential worths given a CSV of rho and uncertainties.
@@ -282,7 +148,7 @@ def plot_data_void(keff_csv_name, rho_csv_name, params_csv_name, figure_name, rh
     ax_x_major_ticks_interval, ax_x_minor_ticks_interval = 0.1, 0.025
     if for_fun:
         ax_x_min, ax_x_max = 0, 2
-        ax_x_major_ticks_interval, ax_x_minor_ticks_interva = 0.1, 0.05
+        ax_x_major_ticks_interval, ax_x_minor_ticks_interval = 0.1, 0.05
 
     ax_keff_y_min, ax_keff_y_max = 0.8, 1.15
     ax_keff_y_major_ticks_interval, ax_keff_y_minor_ticks_interval = 0.05, 0.025
@@ -345,8 +211,8 @@ def plot_data_void(keff_csv_name, rho_csv_name, params_csv_name, figure_name, rh
     # Plot data for void
     y_void, y_void_unc = [], []
     for water_density in x:
-        if rho_or_dollars == 'rho': y_void.append(params_df.loc[water_density,'void rho']), y_void_unc.append(params_df.loc[water_density, 'void rho unc'])
-        else: y_void.append(params_df.loc[water_density, 'void dollars']), y_void_unc.append(params_df.loc[water_density, 'void dollars unc'])
+        if rho_or_dollars == 'rho': y_void.append(params_df.loc[water_density,'coef rho']), y_void_unc.append(params_df.loc[water_density, 'coef rho unc'])
+        else: y_void.append(params_df.loc[water_density, 'coef dollars']), y_void_unc.append(params_df.loc[water_density, 'coef dollars unc'])
 
     ax_void.errorbar(x, y_void, yerr=y_void_unc,
                      marker="o", ls="none",
