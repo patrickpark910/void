@@ -58,7 +58,7 @@ def initialize_rane():
 
 
 def find_base_file(filepath):
-    # filepath: string with current folder directory name, e.g. "C:/MCNP6/facilities/reed/rodcal-mcnp"
+    # filepath: string with current folder directory name, e.g. "C:/MCNP6/facilities/reed/rodcal_mcnp"
     base_input_name = None
     while base_input_name == None:
         potential_base_input_name = input('Input base MCNP file name, including extension: ')

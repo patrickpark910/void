@@ -150,8 +150,8 @@ def plot_data_void(keff_csv_name, rho_csv_name, params_csv_name, figure_name, rh
         ax_x_min, ax_x_max = 0, 2
         ax_x_major_ticks_interval, ax_x_minor_ticks_interval = 0.1, 0.05
 
-    ax_keff_y_min, ax_keff_y_max = 0.8, 1.15
-    ax_keff_y_major_ticks_interval, ax_keff_y_minor_ticks_interval = 0.05, 0.025
+    ax_keff_y_min, ax_keff_y_max = 0.85, 1.10
+    ax_keff_y_major_ticks_interval, ax_keff_y_minor_ticks_interval = 0.05, 0.01
 
     ax_rho_y_min, ax_rho_y_max = -16, 1
     ax_rho_y_major_ticks_interval, ax_rho_y_minor_ticks_interval = 2, 1
@@ -208,7 +208,7 @@ def plot_data_void(keff_csv_name, rho_csv_name, params_csv_name, figure_name, rh
                 label=r'y=-{:.1f}$x^2$+{:.0f}$x${:.0f},  $R^2$={:.2f},  $\sigma$={:.2f}'.format(
                     np.abs(eq_rho[0]), eq_rho[1], eq_rho[2], r2_rho, sd_rho))
 
-    # Plot data for void
+    # Plot data for coef_void
     y_void, y_void_unc = [], []
     for water_density in x:
         if rho_or_dollars == 'rho': y_void.append(params_df.loc[water_density,'coef rho']), y_void_unc.append(params_df.loc[water_density, 'coef rho unc'])
